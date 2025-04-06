@@ -76,18 +76,19 @@ class ChatBotApp:
         a response using the chatbot. Also displays the user's input and the bot's response in the chat.
         """
         if prompt := st.chat_input("What up, Human? 🤖"):
-            # Store and display user message
+            # Store and render user message
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Get bot response
+            # Get bot response and render. #TODO: See if we can merge the rendering logic 
+            # in a single render_message_history() --> render_messages()
             response = self.get_response(prompt)
             st.session_state.messages.append({"role": "assistant", "content": response})
             with st.chat_message("assistant"):
                 st.markdown(response)
 
-    def render_messages(self):
+    def render_message_history(self):
         """
         Renders all the messages stored in session state. This displays the entire chat history
         between the user and the assistant.
@@ -111,7 +112,7 @@ class ChatBotApp:
         """
         self.run_setup_once()       # Run this setup logic only once
         self.setup_page_header()    # Always render header on each rerun
-        self.render_messages()
+        self.render_message_history()
         self.handle_user_input()
         self.show_debug()
 
