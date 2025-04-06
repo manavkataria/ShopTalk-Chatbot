@@ -1,8 +1,8 @@
 streamlit
-langchain>=0.0.300
-langchain-core
+langchain>=0.0.300,<1.0.0
+langchain-core>=0.3.40,<1.0.0
 langgraph>0.2.27
-langchain-openai
+langchain-openai>=0.3.7
 chromadb
-langchain-community
+langsmith>=0.3.11,<0.4.0
 pysqlite3-binary

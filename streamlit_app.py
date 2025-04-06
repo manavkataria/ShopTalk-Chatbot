@@ -1,11 +1,20 @@
+# This is a Streamlit application for an Amazon eCommerce chatbot using LangChain and OpenAI's GPT-4o-mini model.
+# The application allows users to interact with the chatbot, which retrieves information from a catalog of Amazon products.
+# The chatbot is designed to provide conversational responses based on the product data loaded from a JSON file.
+# The application uses ChromaDB for vector storage and retrieval, and it maintains a conversation history using Streamlit's session state.
+
+# Import necessary libraries
 import streamlit as st
-# import getpass
 import json
 import os
 
+# Import specific classes
 from langchain_openai import ChatOpenAI
-from langchain.chains import ConversationChain
+from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
+from langchain.vectorstores import Chroma
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.callbacks import LangSmithCallbackHandler
 
 # Use environment variable or Streamlit secrets 
 SECRET_API_KEY = os.environ.get("OPENAI_API_KEY") or st.secrets["OPENAI_API_KEY"]
@@ -19,6 +28,53 @@ class ChatBotApp:
         Initializes the ChatBotApp class with the given model name.
         """
         self.model_name = model_name
+        self.catalog_data = None
+        self.vector_store = None
+
+    def load_catalog_data(self, file_path="./data/listings_0_head.json"):
+        """
+        Loads and parses the Amazon catalog data from the specified JSON file.
+
+        Args:
+            file_path (str): Path to the JSON file containing the catalog data.
+        """
+        with open(file_path, "r") as file:
+            data = json.load(file)
+            self.catalog_data = [
+                {
+                    "item_id": item.get("item_id"),
+                    "main_image_id": item.get("main_image_id"),
+                    "brand": item.get("brand"),
+                    "item_keywords": item.get("item_keywords"),
+                    "color": item.get("color"),
+                    "product_type": item.get("product_type"),
+                }
+                for item in data
+            ]
+        st.write("Catalog data loaded successfully.")
+
+    def initialize_chroma_db(self):
+        """
+        Initializes ChromaDB with the catalog data and creates a vector store for retrieval.
+
+        Raises:
+            ValueError: If catalog data is not loaded before initializing the database.
+        """
+        if not self.catalog_data:
+            raise ValueError("Catalog data must be loaded before initializing ChromaDB.")
+
+        embeddings = OpenAIEmbeddings(api_key=SECRET_API_KEY)
+        self.vector_store = Chroma.from_documents(
+            documents=[
+                {
+                    "content": f"{item['brand']} {item['product_type']} {item['color']} {item['item_keywords']}",
+                    "metadata": item,
+                }
+                for item in self.catalog_data
+            ],
+            embedding=embeddings,
+        )
+        st.write("ChromaDB initialized successfully.")
 
     def setup_page_header(self):
         """
@@ -30,15 +86,30 @@ class ChatBotApp:
         st.markdown("<h3 style='text-align: center;'> Amazon eCommerce Chatbot with RAG LLM", unsafe_allow_html=True)
         st.write("Description: This is a LangChain chatbot that uses OpenAI's `gpt-4o-mini` model to generate responses.")
 
+    def setup_langsmith(self):
+        """
+        Sets up LangSmith tracing for detailed logging and debugging of LangChain operations.
+        """
+        if "langsmith_handler" not in st.session_state:
+            st.session_state.langsmith_handler = LangSmithCallbackHandler()
+            st.write("LangSmith tracing initialized.")
+
     def setup_conversation_chain(self):
         """
         Sets up the conversation chain by initializing the LLM and memory if not already set.
-        This function is called only once to avoid overwriting the conversation state.
+        This function is called only once to avoid overwriting the conversation state with 
+        retrieval-augmented generation (RAG) using ChromaDB. 
         """
         if "conversation" not in st.session_state:
+            if not self.vector_store:
+                raise ValueError("Vector store must be initialized before setting up the conversation chain.")
+
             llm = ChatOpenAI(model=self.model_name, api_key=SECRET_API_KEY, temperature=0.7)
+            retriever = self.vector_store.as_retriever()
             memory = ConversationBufferMemory()
-            st.session_state.conversation = ConversationChain(llm=llm, memory=memory)
+            st.session_state.conversation = ConversationalRetrievalChain(
+                retriever=retriever, llm=llm, memory=memory, callbacks=[st.session_state.langsmith_handler]
+            )
 
     def setup_messages(self):
         """
@@ -51,10 +122,14 @@ class ChatBotApp:
     def run_setup_once(self):
         """
         Runs the setup process only once, ensuring that page header, conversation chain,
-        and message history are initialized when needed. This prevents setup from running on every rerun.
+        LangSmith tracing, and message history are initialized when needed.
+        This prevents setup from running on every rerun.
         """
         if not st.session_state.get("initialized"):
-            self.setup_conversation_chain()
+            self.setup_langsmith()  # Initialize LangSmith tracing
+            self.load_catalog_data()  # Load catalog data
+            self.initialize_chroma_db()  # Initialize ChromaDB
+            self.setup_conversation_chain()  # Setup conversation chain
             self.setup_messages()
             st.session_state.initialized = True
 
@@ -101,9 +176,14 @@ class ChatBotApp:
         """
         Displays debug information for developers, showing the message history in JSON format
         inside an expandable section. This helps in inspecting the session state.
+        Additionally, displays the catalog data if loaded.
         """
         with st.expander("Show debug messages"):
             st.code(json.dumps(st.session_state.messages, indent=2), language="json")
+        
+        with st.expander("Show catalog data"):
+            st.code(json.dumps(self.catalog_data if self.catalog_data else "{'self.catalog_data is empty'}", indent=2), language="json")
+            
 
     def render_app(self):
         """
